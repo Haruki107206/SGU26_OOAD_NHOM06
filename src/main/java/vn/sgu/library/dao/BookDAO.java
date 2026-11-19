@@ -13,15 +13,21 @@ public final class BookDAO {
     public List<BookRow> search(String text)throws SQLException{
         String sql="""
                 SELECT s.ma_sach,s.ten_sach,
-                       COALESCE(GROUP_CONCAT(DISTINCT tg.ten_tac_gia ORDER BY tg.ten_tac_gia SEPARATOR ', '),''),
+                       COALESCE(author_list.author_names,''),
                        tl.ten_the_loai,nxb.ten_nxb,s.nam_xuat_ban,COALESCE(ks.ma_ke,''),
                        COUNT(DISTINCT bs.id),COUNT(DISTINCT CASE WHEN bs.trang_thai='SAN_SANG' THEN bs.id END)
                 FROM sach s
+                OUTER APPLY (
+                    SELECT STRING_AGG(a.ten_tac_gia, ', ') WITHIN GROUP (ORDER BY a.ten_tac_gia) AS author_names
+                    FROM (SELECT DISTINCT tg2.ten_tac_gia
+                          FROM sach_tac_gia sta2 JOIN tac_gia tg2 ON tg2.id=sta2.tac_gia_id
+                          WHERE sta2.sach_id=s.id) a
+                ) author_list
                 LEFT JOIN sach_tac_gia sta ON sta.sach_id=s.id LEFT JOIN tac_gia tg ON tg.id=sta.tac_gia_id
                 LEFT JOIN the_loai tl ON tl.id=s.the_loai_id LEFT JOIN nha_xuat_ban nxb ON nxb.id=s.nxb_id
                 LEFT JOIN ke_sach ks ON ks.id=s.ke_sach_id LEFT JOIN ban_sao_sach bs ON bs.sach_id=s.id
-                WHERE s.trang_thai='HOAT_DONG' AND (?='' OR s.ma_sach LIKE ? OR s.ten_sach LIKE ? OR tg.ten_tac_gia LIKE ? OR tl.ten_the_loai LIKE ? OR CAST(s.nam_xuat_ban AS CHAR) LIKE ?)
-                GROUP BY s.id,s.ma_sach,s.ten_sach,tl.ten_the_loai,nxb.ten_nxb,s.nam_xuat_ban,ks.ma_ke ORDER BY s.ten_sach
+                WHERE s.trang_thai='HOAT_DONG' AND (?='' OR s.ma_sach LIKE ? OR s.ten_sach LIKE ? OR tg.ten_tac_gia LIKE ? OR tl.ten_the_loai LIKE ? OR CAST(s.nam_xuat_ban AS VARCHAR(4)) LIKE ?)
+                GROUP BY s.id,s.ma_sach,s.ten_sach,author_list.author_names,tl.ten_the_loai,nxb.ten_nxb,s.nam_xuat_ban,ks.ma_ke ORDER BY s.ten_sach
                 """;
         try(Connection c=Database.openConnection();PreparedStatement p=c.prepareStatement(sql)){
             String q=text==null?"":text.trim(),like="%"+q+"%";p.setString(1,q);for(int i=2;i<=6;i++)p.setString(i,like);
@@ -32,7 +38,20 @@ public final class BookDAO {
         try(Connection c=Database.openConnection();PreparedStatement p=c.prepareStatement("SELECT id FROM sach WHERE ma_sach=? AND trang_thai='HOAT_DONG'")){p.setString(1,code);try(ResultSet r=p.executeQuery()){if(!r.next())throw new SQLException("Không tìm thấy đầu sách.");return r.getInt(1);}}
     }
     public Book get(int id)throws SQLException{
-        String sql="SELECT s.ma_sach,s.ten_sach,GROUP_CONCAT(DISTINCT tg.ten_tac_gia SEPARATOR ', '),tl.ten_the_loai,nxb.ten_nxb,s.nam_xuat_ban,COALESCE(ks.ma_ke,'') FROM sach s LEFT JOIN sach_tac_gia sta ON sta.sach_id=s.id LEFT JOIN tac_gia tg ON tg.id=sta.tac_gia_id LEFT JOIN the_loai tl ON tl.id=s.the_loai_id LEFT JOIN nha_xuat_ban nxb ON nxb.id=s.nxb_id LEFT JOIN ke_sach ks ON ks.id=s.ke_sach_id WHERE s.id=? GROUP BY s.id";
+        String sql="""
+                SELECT s.ma_sach,s.ten_sach,COALESCE(author_list.author_names,''),tl.ten_the_loai,nxb.ten_nxb,s.nam_xuat_ban,COALESCE(ks.ma_ke,'')
+                FROM sach s
+                OUTER APPLY (
+                    SELECT STRING_AGG(a.ten_tac_gia, ', ') WITHIN GROUP (ORDER BY a.ten_tac_gia) AS author_names
+                    FROM (SELECT DISTINCT tg.ten_tac_gia
+                          FROM sach_tac_gia sta JOIN tac_gia tg ON tg.id=sta.tac_gia_id
+                          WHERE sta.sach_id=s.id) a
+                ) author_list
+                LEFT JOIN the_loai tl ON tl.id=s.the_loai_id
+                LEFT JOIN nha_xuat_ban nxb ON nxb.id=s.nxb_id
+                LEFT JOIN ke_sach ks ON ks.id=s.ke_sach_id
+                WHERE s.id=?
+                """;
         try(Connection c=Database.openConnection();PreparedStatement p=c.prepareStatement(sql)){p.setInt(1,id);try(ResultSet r=p.executeQuery()){if(!r.next())return null;Book b=new Book();b.id=id;b.code=r.getString(1);b.title=r.getString(2);b.authors=nvl(r.getString(3));b.genre=nvl(r.getString(4));b.publisher=nvl(r.getString(5));b.publicationYear=r.getInt(6);b.shelf=nvl(r.getString(7));return b;}}
     }
     public void save(Book b)throws SQLException{
@@ -45,7 +64,11 @@ public final class BookDAO {
             if(b.id>0){try(PreparedStatement p=c.prepareStatement("UPDATE sach SET ma_sach=?,ten_sach=?,the_loai_id=?,nxb_id=?,nam_xuat_ban=?,ke_sach_id=?,trang_thai='HOAT_DONG' WHERE id=?")){p.setString(1,b.code);p.setString(2,b.title);setNullable(p,3,genre);setNullable(p,4,publisher);p.setInt(5,b.publicationYear);setNullable(p,6,shelf);p.setInt(7,b.id);if(p.executeUpdate()==0)throw new SQLException("Không tìm thấy đầu sách để cập nhật.");bookId=b.id;}}
             else{try(PreparedStatement p=c.prepareStatement("INSERT INTO sach(ma_sach,ten_sach,the_loai_id,nxb_id,nam_xuat_ban,ke_sach_id) VALUES(?,?,?,?,?,?)",Statement.RETURN_GENERATED_KEYS)){p.setString(1,b.code);p.setString(2,b.title);setNullable(p,3,genre);setNullable(p,4,publisher);p.setInt(5,b.publicationYear);setNullable(p,6,shelf);p.executeUpdate();try(ResultSet k=p.getGeneratedKeys()){k.next();bookId=k.getInt(1);}}}
             try(PreparedStatement p=c.prepareStatement("DELETE FROM sach_tac_gia WHERE sach_id=?")){p.setInt(1,bookId);p.executeUpdate();}
-            for(String author:b.authors.split(",")){String name=author.trim();int authorId=ensure(c,"tac_gia","ten_tac_gia",name);try(PreparedStatement p=c.prepareStatement("INSERT IGNORE INTO sach_tac_gia(sach_id,tac_gia_id) VALUES(?,?)")){p.setInt(1,bookId);p.setInt(2,authorId);p.executeUpdate();}}
+            List<Integer> authorIds=new ArrayList<>();
+            for(String author:b.authors.split(",")){String name=author.trim();int authorId=ensure(c,"tac_gia","ten_tac_gia",name);if(!authorIds.contains(authorId))authorIds.add(authorId);}
+            try(PreparedStatement p=c.prepareStatement("INSERT INTO sach_tac_gia(sach_id,tac_gia_id) VALUES(?,?)")){
+                for(int authorId:authorIds){p.setInt(1,bookId);p.setInt(2,authorId);p.executeUpdate();}
+            }
             c.commit();
         }catch(Exception e){c.rollback();if(e instanceof SQLException s)throw s;if(e instanceof IllegalArgumentException a)throw a;throw new SQLException(e);}}
     }

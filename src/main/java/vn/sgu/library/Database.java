@@ -10,8 +10,8 @@ public final class Database {
 
     public static Connection openConnection() throws SQLException {
         String url = System.getenv().getOrDefault("LIBRARY_DB_URL",
-                "jdbc:mysql://localhost:3306/sgu_library?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC");
-        String user = System.getenv().getOrDefault("LIBRARY_DB_USER", "root");
+                "jdbc:sqlserver://localhost:1433;databaseName=sgu_library;encrypt=true;trustServerCertificate=true");
+        String user = System.getenv().getOrDefault("LIBRARY_DB_USER", "library_app");
         String password = System.getenv().getOrDefault("LIBRARY_DB_PASSWORD", "");
         return DriverManager.getConnection(url, user, password);
     }

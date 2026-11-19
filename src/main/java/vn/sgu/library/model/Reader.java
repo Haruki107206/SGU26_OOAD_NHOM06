@@ -4,4 +4,10 @@ import java.time.LocalDate;
 
 public record Reader(int id, String code, String fullName, String identityCode, String unit,
                      String email, String phone, String cardCode, LocalDate cardExpiry,
-                     String cardStatus) { }
+                     String cardStatus, LocalDate birthDate, int cardId,
+                     String cardLockReason) {
+    @Override
+    public String toString() {
+        return code + " - " + fullName;
+    }
+}

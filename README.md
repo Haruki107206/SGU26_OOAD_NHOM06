@@ -1,6 +1,6 @@
 # Đồ án hệ thống quản lý thư viện
 
-Đồ án môn **Phân tích thiết kế hướng đối tượng**: ứng dụng quản lý thư viện bằng Java Swing, JDBC và MySQL/MariaDB.
+Đồ án môn **Phân tích thiết kế hướng đối tượng**: ứng dụng quản lý thư viện bằng Java Swing, JDBC và Microsoft SQL Server.
 
 
 ## Phân công công việc
@@ -17,34 +17,54 @@
 
 - JDK 17 trở lên
 - Apache Maven 3.9 trở lên
-- MySQL 8 hoặc MariaDB tương thích
-- MySQL Connector/J khai báo trong `pom.xml`
+- Microsoft SQL Server 2017 trở lên
+- Microsoft JDBC Driver for SQL Server khai báo trong `pom.xml`
 
 ## Cài đặt CSDL và chạy chương trình
 
-1. Khởi động MySQL/MariaDB.
-2. Tại thư mục gốc repo, chạy `database/library_catalog.sql` bằng MySQL Workbench hoặc:
+1. Khởi động SQL Server.
+2. Tại thư mục gốc repo, chạy `database/library_catalog.sql` bằng SQL Server Management Studio hoặc `sqlcmd` (dùng Windows Authentication).
 
 ```powershell
-mysql -u root -p < database/library_catalog.sql
+sqlcmd -S localhost -E -f i:65001 -i database\library_catalog.sql
 ```
 
-3. Mặc định ứng dụng dùng `jdbc:mysql://localhost:3306/sgu_library`, user `root`, mật khẩu rỗng. Chạy:
+3. Trong SSMS, tạo login riêng cho ứng dụng (không dùng `sa`):
+   - Mở **Security → Logins**, nhấp phải **Logins → New Login...**.
+   - Chọn **SQL Server authentication**, đặt **Login name** là `library_app`, rồi tự đặt và xác nhận mật khẩu mạnh. Để **Enforce password policy** được chọn.
+   - Đặt **Default database** là `sgu_library`.
+   - Mở trang **User Mapping**, chọn `sgu_library`; ở **Database role membership**, chỉ chọn `db_datareader` và `db_datawriter` (ngoài `public` mặc định).
+   - Nhấn **OK**. SQL Server phải bật **SQL Server and Windows Authentication mode**. Nếu vừa bật chế độ này, khởi động lại dịch vụ SQL Server.
+
+   Các quyền trên cho phép ứng dụng đọc/ghi dữ liệu thư viện; không cấp quyền quản trị server. Chạy script schema ở bước 2 bằng Windows Authentication trước khi chạy ứng dụng.
+
+4. Cấu hình ứng dụng và tiện ích tạo Admin bằng các biến môi trường PowerShell. Dùng mật khẩu SQL vừa đặt cho `library_app`:
+
+```powershell
+$env:LIBRARY_DB_URL = "jdbc:sqlserver://localhost:1433;databaseName=sgu_library;encrypt=true;trustServerCertificate=true"
+$env:LIBRARY_DB_USER = "library_app"
+$env:LIBRARY_DB_PASSWORD = "MAT_KHAU_SQL_CUA_LIBRARY_APP"
+```
+
+Thay `localhost:1433` nếu server/port SQL Server của bạn khác; ví dụ phải khớp với instance đã cấu hình trong SSMS.
+
+5. Tạo hoặc khôi phục tài khoản Admin duy nhất bằng tiện ích. Tài khoản mặc định là `Admin`, mật khẩu `admin@12345`; mật khẩu được lưu dưới dạng PBKDF2 hash. Chạy lại tiện ích sẽ đặt lại Admin về thông tin mặc định và mở khóa tài khoản:
+
+```powershell
+mvn clean compile exec:java@admin-bootstrap
+```
+
+6. Khởi chạy ứng dụng:
 
 ```powershell
 mvn clean compile exec:java
 ```
 
-Nếu cần cấu hình khác, đặt biến môi trường trong PowerShell trước khi chạy:
+Nếu không kết nối được, kiểm tra dịch vụ SQL Server, TCP/IP và cổng 1433, tên database, chế độ xác thực, user và mật khẩu. `LIBRARY_DB_URL` có thể thay đổi theo instance/cấu hình môi trường.
 
-```powershell
-$env:LIBRARY_DB_URL = "jdbc:mysql://localhost:3306/sgu_library?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC"
-$env:LIBRARY_DB_USER = "root"
-$env:LIBRARY_DB_PASSWORD = "mat-khau-mysql"
-mvn clean compile exec:java
-```
+Sau lần đăng nhập đầu, Admin có thể đổi mật khẩu trong ứng dụng. Tài khoản Admin có tên cố định và không thể tạo/sửa trong màn hình quản lý tài khoản; Admin tạo một tài khoản riêng cho từng Thủ thư hoặc Độc giả.
 
-Nếu không kết nối được, kiểm tra dịch vụ MySQL/MariaDB, cổng, tên database, user và mật khẩu.
+Tài khoản Admin quản lý tài khoản và phân quyền; Thủ thư quản lý sách, độc giả, mượn/trả và phiếu phạt; Độc giả chỉ tra cứu và xem hồ sơ/lịch sử của mình. Đăng nhập sai liên tiếp 6 lần sẽ khóa tài khoản. Chức năng QR ghi nhận thanh toán do thủ thư xác nhận, không tích hợp cổng thanh toán.
 
 ## Các luồng thử thủ công
 
@@ -54,6 +74,8 @@ Nếu không kết nối được, kiểm tra dịch vụ MySQL/MariaDB, cổng,
 - **Trả:** chọn lượt đang mượn, bấm **Ghi nhận trả cuốn đã chọn**, rồi chọn tốt/hỏng/mất.
 - **Bản sao:** mở **Quản lý bản sao** để xem/thêm mã vạch hoặc đánh dấu hỏng/mất.
 - **Báo cáo:** mở **Báo cáo** để xem tổng quan, top 10 và xuất CSV.
+- **Tài khoản/phân quyền:** đăng nhập `Admin`, tạo tài khoản riêng cho Thủ thư hoặc liên kết tài khoản Độc giả với hồ sơ chưa liên kết; thử khóa/mở khóa và đăng nhập sai 6 lần.
+- **Phạt/công nợ:** tạo chi tiết vi phạm, xác nhận thanh toán tiền mặt/QR; thử mượn hoặc gia hạn thẻ khi còn khoản chưa thanh toán.
 
 Đây là bước kiểm tra thủ công ban đầu, chưa thay thế kiểm thử đầy đủ. Dữ liệu mẫu có thể đổi sau khi thao tác.
 

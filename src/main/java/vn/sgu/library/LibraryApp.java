@@ -2,20 +2,31 @@ package vn.sgu.library;
 
 import vn.sgu.library.view.CirculationDialog;
 import vn.sgu.library.view.ReaderDialog;
+import vn.sgu.library.view.ReaderSelfDialog;
 import vn.sgu.library.view.ReportDialog;
-import vn.sgu.library.dao.BookDAO;
+import vn.sgu.library.view.AccountDialog;
+import vn.sgu.library.view.ChangePasswordDialog;
+import vn.sgu.library.view.FineDialog;
+import vn.sgu.library.view.LoginDialog;
+import vn.sgu.library.controller.CatalogController;
 import vn.sgu.library.model.Book;
 import vn.sgu.library.model.BookCopy;
 import vn.sgu.library.model.BookRow;
+import vn.sgu.library.model.UserRole;
+import vn.sgu.library.model.UserSession;
+import vn.sgu.library.model.SessionExpiredException;
+import vn.sgu.library.security.SessionManager;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.sql.SQLException;
 
-/** Standalone catalog and copy-management module for the library project. */
+/** Main Swing application for the library system. */
 public final class LibraryApp {
-    private final BookDAO dao = new BookDAO();
+    private static JFrame activeFrame;
+    private final CatalogController dao = new CatalogController();
+    private final UserSession session;
     private final DefaultTableModel model = new DefaultTableModel(
             new Object[]{"Mã sách", "Tên sách", "Tác giả", "Thể loại", "Nhà xuất bản", "Năm", "Vị trí", "Tổng bản", "Có thể mượn"}, 0) {
         @Override public boolean isCellEditable(int row, int column) { return false; }
@@ -23,20 +34,35 @@ public final class LibraryApp {
     private final JTable table = new JTable(model);
     private final JTextField search = new JTextField(26);
 
-    public static void main(String[] args) {
-        SwingUtilities.invokeLater(() -> new LibraryApp().show());
+    public LibraryApp(UserSession session) {
+        this.session = session;
     }
 
-    private void show() {
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(LoginDialog::showLogin);
+    }
+
+    public void show() {
         JFrame frame = new JFrame("Quản lý sách và tra cứu - Thư viện SGU");
+        activeFrame = frame;
         frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
         frame.setMinimumSize(new Dimension(1050, 580));
         frame.setLocationRelativeTo(null);
         JPanel root = new JPanel(new BorderLayout(12, 12));
         root.setBorder(new EmptyBorder(18, 20, 18, 20));
+        JPanel north = new JPanel(new BorderLayout(8, 8));
+        JPanel heading = new JPanel(new BorderLayout());
         JLabel title = new JLabel("DANH MỤC SÁCH", SwingConstants.LEFT);
         title.setFont(title.getFont().deriveFont(Font.BOLD, 22f));
-        root.add(title, BorderLayout.NORTH);
+        heading.add(title, BorderLayout.WEST);
+        JPanel accountActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        accountActions.add(new JLabel(session.username() + " — " + session.role()));
+        JButton changePassword = new JButton("Đổi mật khẩu");
+        JButton logout = new JButton("Đăng xuất");
+        accountActions.add(changePassword);
+        accountActions.add(logout);
+        heading.add(accountActions, BorderLayout.EAST);
+        north.add(heading, BorderLayout.NORTH);
 
         JPanel actions = new JPanel();
         actions.setLayout(new BoxLayout(actions, BoxLayout.Y_AXIS));
@@ -56,10 +82,15 @@ public final class LibraryApp {
         JButton readers = new JButton("Độc giả/thẻ");
         JButton circulation = new JButton("Mượn/trả");
         JButton reports = new JButton("Báo cáo");
+        JButton accounts = new JButton("Tài khoản");
+        JButton fines = new JButton("Phạt/công nợ");
+        JButton myProfile = new JButton("Hồ sơ của tôi");
         bookActions.add(add); bookActions.add(edit); bookActions.add(hide); bookActions.add(copies); bookActions.add(catalogs);
-        serviceActions.add(readers); serviceActions.add(circulation); serviceActions.add(reports);
+        serviceActions.add(readers); serviceActions.add(circulation); serviceActions.add(fines); serviceActions.add(reports);
+        serviceActions.add(accounts); serviceActions.add(myProfile);
         actions.add(searchActions); actions.add(bookActions); actions.add(serviceActions);
-        root.add(actions, BorderLayout.PAGE_START);
+        north.add(actions, BorderLayout.CENTER);
+        root.add(north, BorderLayout.NORTH);
         table.setAutoCreateRowSorter(true);
         table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
         table.setRowHeight(24);
@@ -69,6 +100,20 @@ public final class LibraryApp {
         root.add(new JScrollPane(table), BorderLayout.CENTER);
         frame.setContentPane(root);
 
+        boolean readerRole = session.role() == UserRole.READER;
+        boolean adminRole = session.role() == UserRole.ADMIN;
+        add.setVisible(!readerRole);
+        edit.setVisible(!readerRole);
+        hide.setVisible(!readerRole);
+        copies.setVisible(!readerRole);
+        catalogs.setVisible(!readerRole);
+        readers.setVisible(!readerRole);
+        circulation.setVisible(!readerRole);
+        fines.setVisible(!readerRole);
+        reports.setVisible(!readerRole);
+        accounts.setVisible(adminRole);
+        myProfile.setVisible(readerRole);
+
         find.addActionListener(e -> refresh(search.getText()));
         search.addActionListener(e -> refresh(search.getText()));
         reset.addActionListener(e -> { search.setText(""); refresh(""); });
@@ -76,10 +121,23 @@ public final class LibraryApp {
         edit.addActionListener(e -> { Integer id = selectedBookId(frame); if (id != null) editBook(frame, id); });
         hide.addActionListener(e -> hideBook(frame));
         copies.addActionListener(e -> manageCopies(frame));
-        catalogs.addActionListener(e -> { CatalogManagerDialog.show(frame); refresh(search.getText()); });
+        catalogs.addActionListener(e -> { CatalogManagerDialog.show(frame, dao); refresh(search.getText()); });
         readers.addActionListener(e -> ReaderDialog.show(frame));
         circulation.addActionListener(e -> CirculationDialog.show(frame));
         reports.addActionListener(e -> ReportDialog.show(frame));
+        accounts.addActionListener(e -> AccountDialog.show(frame));
+        fines.addActionListener(e -> FineDialog.show(frame));
+        myProfile.addActionListener(e -> ReaderSelfDialog.show(frame));
+        changePassword.addActionListener(e -> ChangePasswordDialog.show(frame));
+        logout.addActionListener(e -> {
+            if (JOptionPane.showConfirmDialog(frame, "Đăng xuất khỏi hệ thống?",
+                    "Xác nhận", JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION) {
+                SessionManager.end();
+                frame.dispose();
+                activeFrame = null;
+                LoginDialog.showLogin();
+            }
+        });
         refresh("");
         frame.setVisible(true);
     }
@@ -158,10 +216,20 @@ public final class LibraryApp {
     public static void showError(Component parent, Exception ex) {
         String message=ex.getMessage()==null?"Đã xảy ra lỗi không xác định.":ex.getMessage();
         if(ex instanceof SQLException sqlEx){
-            if("23000".equals(sqlEx.getSQLState())) message="Mã sách hoặc mã vạch đã tồn tại. Hãy dùng mã khác.";
-            else if(sqlEx.getSQLState()!=null&&sqlEx.getSQLState().startsWith("08")) message="Không kết nối được CSDL. Kiểm tra MySQL/MariaDB, thông tin kết nối và file database/library_catalog.sql.";
+            if("23000".equals(sqlEx.getSQLState())) message="Dữ liệu bị trùng hoặc vi phạm ràng buộc CSDL. Hãy kiểm tra mã/tên đã tồn tại.";
+            else if(sqlEx.getSQLState()!=null&&sqlEx.getSQLState().startsWith("08")) message="Không kết nối được SQL Server. Kiểm tra dịch vụ, thông tin kết nối và file database/library_catalog.sql.";
         }
         JOptionPane.showMessageDialog(parent, message, "Không thể thực hiện", JOptionPane.ERROR_MESSAGE);
+        if (ex instanceof SessionExpiredException) {
+            if (parent instanceof Window window && window != activeFrame) {
+                window.dispose();
+            }
+            if (activeFrame != null) {
+                activeFrame.dispose();
+                activeFrame = null;
+            }
+            LoginDialog.showLogin();
+        }
     }
 
 }
