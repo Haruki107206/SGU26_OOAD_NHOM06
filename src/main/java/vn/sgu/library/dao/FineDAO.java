@@ -4,6 +4,7 @@ import vn.sgu.library.Database;
 import vn.sgu.library.model.Fine;
 import vn.sgu.library.model.FineLine;
 
+import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -15,6 +16,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class FineDAO {
+    public static final BigDecimal OVERDUE_FINE_PER_DAY = new BigDecimal("2000.00");
+
     public List<Fine> findAll() throws SQLException {
         String sql = """
                 SELECT pp.ma_phieu_phat,d.ma_doc_gia,d.ho_ten,a.ten_dang_nhap,
@@ -67,10 +70,10 @@ public final class FineDAO {
         if (details == null || details.isEmpty()) {
             throw new IllegalArgumentException("Phiếu phạt phải có ít nhất một chi tiết vi phạm.");
         }
+        details.forEach(FineDAO::validate);
         try (Connection connection = Database.openConnection()) {
             connection.setAutoCommit(false);
             try {
-                requireActiveStaff(connection, staffAccountId);
                 try (PreparedStatement statement = connection.prepareStatement(
                         "SELECT 1 FROM dbo.doc_gia WITH (UPDLOCK, ROWLOCK) WHERE id=?")) {
                     statement.setInt(1, readerId);
@@ -80,43 +83,7 @@ public final class FineDAO {
                         }
                     }
                 }
-                long fineId;
-                try (PreparedStatement statement = connection.prepareStatement(
-                        "INSERT INTO dbo.phieu_phat(doc_gia_id,ma_thu_thu) OUTPUT INSERTED.ma_phieu_phat VALUES(?,?)")) {
-                    statement.setInt(1, readerId);
-                    statement.setInt(2, staffAccountId);
-                    try (ResultSet result = statement.executeQuery()) {
-                        if (!result.next()) {
-                            throw new SQLException("Không tạo được phiếu phạt.");
-                        }
-                        fineId = result.getLong(1);
-                    }
-                }
-                String insert = """
-                        INSERT INTO dbo.ct_phieu_phat
-                            (ma_phieu_phat,ma_ct_muon,loai_vi_pham,so_ngay_tre,so_tien,mo_ta)
-                        VALUES (?,?,?,?,?,?)
-                        """;
-                try (PreparedStatement statement = connection.prepareStatement(insert)) {
-                    for (FineLine detail : details) {
-                        validate(detail);
-                        statement.setLong(1, fineId);
-                        if (detail.loanDetailId() == null) {
-                            statement.setNull(2, Types.INTEGER);
-                        } else {
-                            statement.setInt(2, detail.loanDetailId());
-                        }
-                        statement.setString(3, detail.violationType());
-                        if (detail.overdueDays() == null) {
-                            statement.setNull(4, Types.INTEGER);
-                        } else {
-                            statement.setInt(4, detail.overdueDays());
-                        }
-                        statement.setBigDecimal(5, detail.amount());
-                        statement.setString(6, blankToNull(detail.description()));
-                        statement.executeUpdate();
-                    }
-                }
+                long fineId = createWithinTransaction(connection, readerId, staffAccountId, details);
                 connection.commit();
                 return fineId;
             } catch (SQLException | RuntimeException ex) {
@@ -124,6 +91,73 @@ public final class FineDAO {
                 throw ex;
             }
         }
+    }
+
+    static long createWithinTransaction(Connection connection, int readerId, int staffAccountId,
+                                        List<FineLine> details) throws SQLException {
+        if (details == null || details.isEmpty()) {
+            throw new IllegalArgumentException("Phiếu phạt phải có ít nhất một chi tiết vi phạm.");
+        }
+        requireActiveStaff(connection, staffAccountId);
+        for (FineLine detail : details) {
+            validate(detail);
+            if (detail.loanDetailId() != null) {
+                try (PreparedStatement statement = connection.prepareStatement("""
+                        SELECT 1
+                        FROM dbo.ct_phieu_muon ct
+                        JOIN dbo.phieu_muon pm ON pm.id=ct.phieu_muon_id
+                        WHERE ct.id=? AND pm.doc_gia_id=?
+                        """)) {
+                    statement.setInt(1, detail.loanDetailId());
+                    statement.setInt(2, readerId);
+                    try (ResultSet result = statement.executeQuery()) {
+                        if (!result.next()) {
+                            throw new SQLException("Dòng mượn không thuộc độc giả đang lập phiếu phạt.");
+                        }
+                    }
+                }
+            }
+        }
+
+        long fineId;
+        try (PreparedStatement statement = connection.prepareStatement(
+                "INSERT INTO dbo.phieu_phat(doc_gia_id,ma_thu_thu) "
+                        + "OUTPUT INSERTED.ma_phieu_phat VALUES(?,?)")) {
+            statement.setInt(1, readerId);
+            statement.setInt(2, staffAccountId);
+            try (ResultSet result = statement.executeQuery()) {
+                if (!result.next()) {
+                    throw new SQLException("Không tạo được phiếu phạt.");
+                }
+                fineId = result.getLong(1);
+            }
+        }
+
+        String insert = """
+                INSERT INTO dbo.ct_phieu_phat
+                    (ma_phieu_phat,ma_ct_muon,loai_vi_pham,so_ngay_tre,so_tien,mo_ta)
+                VALUES (?,?,?,?,?,?)
+                """;
+        try (PreparedStatement statement = connection.prepareStatement(insert)) {
+            for (FineLine detail : details) {
+                statement.setLong(1, fineId);
+                if (detail.loanDetailId() == null) {
+                    statement.setNull(2, Types.INTEGER);
+                } else {
+                    statement.setInt(2, detail.loanDetailId());
+                }
+                statement.setString(3, detail.violationType());
+                if (detail.overdueDays() == null) {
+                    statement.setNull(4, Types.INTEGER);
+                } else {
+                    statement.setInt(4, detail.overdueDays());
+                }
+                statement.setBigDecimal(5, detail.amount());
+                statement.setString(6, blankToNull(detail.description()));
+                statement.executeUpdate();
+            }
+        }
+        return fineId;
     }
 
     public void markPaid(long fineId, String paymentMethod, int staffAccountId) throws SQLException {
@@ -195,12 +229,24 @@ public final class FineDAO {
         if (detail.overdueDays() != null && detail.overdueDays() < 0) {
             throw new IllegalArgumentException("Số ngày trễ không được âm.");
         }
-        if ("QuaHan".equals(detail.violationType()) && detail.overdueDays() == null) {
-            throw new IllegalArgumentException("Vi phạm quá hạn phải có số ngày trễ.");
+        if ("QuaHan".equals(detail.violationType())
+                && (detail.overdueDays() == null || detail.overdueDays() < 1)) {
+            throw new IllegalArgumentException("Vi phạm quá hạn phải có ít nhất một ngày trễ.");
+        }
+        if ("QuaHan".equals(detail.violationType())
+                && detail.amount().compareTo(calculateOverdueFine(detail.overdueDays())) != 0) {
+            throw new IllegalArgumentException("Tiền phạt quá hạn phải bằng 2.000 đồng nhân số ngày trễ.");
         }
         if (detail.description() != null && detail.description().length() > 250) {
             throw new IllegalArgumentException("Mô tả tối đa 250 ký tự.");
         }
+    }
+
+    public static BigDecimal calculateOverdueFine(int overdueDays) {
+        if (overdueDays < 0) {
+            throw new IllegalArgumentException("Số ngày trễ không được âm.");
+        }
+        return OVERDUE_FINE_PER_DAY.multiply(BigDecimal.valueOf(overdueDays));
     }
 
     private static String blankToNull(String value) {

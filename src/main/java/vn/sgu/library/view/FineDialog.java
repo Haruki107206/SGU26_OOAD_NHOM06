@@ -30,18 +30,6 @@ public final class FineDialog {
         new FineDialog().open(owner);
     }
 
-    public static void createForIncident(Window owner, vn.sgu.library.model.ReturnResult returned) {
-        String type = returned.overdueDays() > 0 ? "QuaHan"
-                : "HONG".equals(returned.condition()) ? "Hong" : "Mat";
-        if (returned.overdueDays() > 0 && !"TOT".equals(returned.condition())) {
-            JOptionPane.showMessageDialog(owner,
-                    "Sách vừa quá hạn vừa " + returned.condition()
-                            + ". Hãy thêm đủ hai chi tiết vi phạm vào cùng phiếu phạt.");
-        }
-        new FineDialog().createFine(owner, returned.readerId(), returned.loanDetailId(), type,
-                returned.overdueDays());
-    }
-
     private void open(Window owner) {
         JDialog dialog = new JDialog(owner, "Phiếu phạt và công nợ", Dialog.ModalityType.APPLICATION_MODAL);
         dialog.setSize(980, 480);
@@ -127,6 +115,34 @@ public final class FineDialog {
             JTextField daysLate = new JTextField(6);
             JTextField amount = new JTextField(10);
             JTextField description = new JTextField(24);
+            Runnable updateOverdueAmount = () -> {
+                boolean overdue = "QuaHan".equals(type.getSelectedItem());
+                amount.setEditable(!overdue);
+                if (!overdue || daysLate.getText().isBlank()) {
+                    if (overdue) {
+                        amount.setText("");
+                    }
+                    return;
+                }
+                try {
+                    int days = Integer.parseInt(daysLate.getText().trim());
+                    amount.setText(FineController.calculateOverdueFine(days).toPlainString());
+                } catch (IllegalArgumentException ex) {
+                    amount.setText("");
+                }
+            };
+            type.addActionListener(event -> updateOverdueAmount.run());
+            daysLate.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+                @Override public void insertUpdate(javax.swing.event.DocumentEvent event) {
+                    updateOverdueAmount.run();
+                }
+                @Override public void removeUpdate(javax.swing.event.DocumentEvent event) {
+                    updateOverdueAmount.run();
+                }
+                @Override public void changedUpdate(javax.swing.event.DocumentEvent event) {
+                    updateOverdueAmount.run();
+                }
+            });
             if (violationType != null) {
                 type.setSelectedItem(violationType);
                 loanId.setText(String.valueOf(loanDetailId));
@@ -141,7 +157,7 @@ public final class FineDialog {
             fields.add(loanId);
             fields.add(new JLabel("Số ngày trễ"));
             fields.add(daysLate);
-            fields.add(new JLabel("Số tiền phạt/đền bù"));
+            fields.add(new JLabel("Số tiền (quá hạn tự tính 2.000 đồng/ngày)"));
             fields.add(amount);
             fields.add(new JLabel("Mô tả"));
             fields.add(description);
@@ -171,10 +187,13 @@ public final class FineDialog {
                 for (int row = 0; row < details.getRowCount(); row++) {
                     Object rawLoanId = details.getValueAt(row, 0);
                     Object rawDays = details.getValueAt(row, 2);
+                    String lineViolationType = details.getValueAt(row, 1).toString();
+                    Integer days = rawDays == null ? null : Integer.valueOf(rawDays.toString());
+                    BigDecimal lineAmount = "QuaHan".equals(lineViolationType)
+                            ? FineController.calculateOverdueFine(days)
+                            : new BigDecimal(details.getValueAt(row, 3).toString());
                     lines.add(new FineLine(rawLoanId == null ? null : Integer.valueOf(rawLoanId.toString()),
-                            details.getValueAt(row, 1).toString(),
-                            rawDays == null ? null : Integer.valueOf(rawDays.toString()),
-                            new BigDecimal(details.getValueAt(row, 3).toString()),
+                            lineViolationType, days, lineAmount,
                             String.valueOf(details.getValueAt(row, 4))));
                 }
                 long fineId = controller.create(((Reader) reader.getSelectedItem()).id(), lines);
@@ -195,7 +214,9 @@ public final class FineDialog {
                     ? null : Integer.valueOf(loanId.getText().trim());
             Integer days = daysLate.getText().isBlank()
                     ? null : Integer.valueOf(daysLate.getText().trim());
-            BigDecimal money = new BigDecimal(amount.getText().trim());
+            BigDecimal money = "QuaHan".equals(type.getSelectedItem())
+                    ? FineController.calculateOverdueFine(days == null ? 0 : days)
+                    : new BigDecimal(amount.getText().trim());
             FineLine line = new FineLine(linkedLoanId, String.valueOf(type.getSelectedItem()),
                     days, money, description.getText());
             FineController.validateDetail(line);

@@ -241,6 +241,7 @@ BEGIN
         id INT IDENTITY(1,1) PRIMARY KEY,
         phieu_muon_id INT NOT NULL,
         ban_sao_sach_id INT NOT NULL,
+        han_tra DATE NOT NULL,
         ngay_tra DATE NULL,
 
         trang_thai VARCHAR(20) NOT NULL DEFAULT 'DANG_MUON',
@@ -275,7 +276,69 @@ BEGIN
 END;
 GO
 
+IF EXISTS (
+    SELECT 1
+    FROM dbo.ct_phieu_muon
+    WHERE trang_thai = 'DANG_MUON'
+    GROUP BY ban_sao_sach_id
+    HAVING COUNT(*) > 1
+)
+    THROW 51011, N'Mot ban sao dang co nhieu luot muon chua tra.', 1;
+GO
+
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE name = N'UX_ct_phieu_muon_mot_luot_dang_muon'
+      AND object_id = OBJECT_ID(N'dbo.ct_phieu_muon')
+)
+    CREATE UNIQUE INDEX UX_ct_phieu_muon_mot_luot_dang_muon
+        ON dbo.ct_phieu_muon(ban_sao_sach_id)
+        WHERE trang_thai = 'DANG_MUON';
+GO
+
+IF EXISTS (
+    SELECT 1
+    FROM dbo.ban_sao_sach
+    WHERE trang_thai NOT IN ('SAN_SANG','DANG_MUON','HONG','MAT')
+)
+    THROW 51012, N'Phat hien trang thai ban sao khong hop le; can chuan hoa truoc.', 1;
+GO
+
+IF NOT EXISTS (
+    SELECT 1 FROM sys.check_constraints
+    WHERE name = N'CK_ban_sao_trang_thai'
+      AND parent_object_id = OBJECT_ID(N'dbo.ban_sao_sach')
+)
+    ALTER TABLE dbo.ban_sao_sach WITH CHECK
+        ADD CONSTRAINT CK_ban_sao_trang_thai
+        CHECK (trang_thai IN ('SAN_SANG','DANG_MUON','HONG','MAT'));
+GO
+
 /* BO SUNG TAI KHOAN, VAI TRO VA LIEN KET VOI SCHEMA HIEN TAI */
+
+IF COL_LENGTH(N'dbo.ct_phieu_muon', N'han_tra') IS NULL
+    ALTER TABLE dbo.ct_phieu_muon ADD han_tra DATE NULL;
+GO
+
+UPDATE ct
+SET han_tra = pm.han_tra
+FROM dbo.ct_phieu_muon ct
+JOIN dbo.phieu_muon pm ON pm.id = ct.phieu_muon_id
+WHERE ct.han_tra IS NULL;
+GO
+
+IF EXISTS (SELECT 1 FROM dbo.ct_phieu_muon WHERE han_tra IS NULL)
+    THROW 51010, N'Khong the bo sung han_tra cho mot so chi tiet phieu muon.', 1;
+GO
+
+IF EXISTS (
+    SELECT 1 FROM sys.columns
+    WHERE object_id = OBJECT_ID(N'dbo.ct_phieu_muon')
+      AND name = N'han_tra'
+      AND is_nullable = 1
+)
+    ALTER TABLE dbo.ct_phieu_muon ALTER COLUMN han_tra DATE NOT NULL;
+GO
 
 IF OBJECT_ID(N'dbo.vai_tro', N'U') IS NULL
 BEGIN
@@ -304,6 +367,28 @@ BEGIN
         CONSTRAINT FK_tai_khoan_vai_tro
             FOREIGN KEY (ma_vai_tro) REFERENCES dbo.vai_tro(ma_vai_tro)
     );
+END;
+GO
+
+IF OBJECT_ID(N'dbo.gia_han_muon', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.gia_han_muon (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        ct_phieu_muon_id INT NOT NULL,
+        ma_thu_thu INT NOT NULL,
+        ngay_gia_han DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+        han_tra_cu DATE NOT NULL,
+        han_tra_moi DATE NOT NULL,
+        CONSTRAINT CK_gia_han_muon_them_7_ngay
+            CHECK (han_tra_moi = DATEADD(DAY, 7, han_tra_cu)),
+        CONSTRAINT UQ_gia_han_muon_ct_phieu_muon UNIQUE (ct_phieu_muon_id),
+        CONSTRAINT FK_gia_han_muon_ct_phieu_muon
+            FOREIGN KEY (ct_phieu_muon_id) REFERENCES dbo.ct_phieu_muon(id),
+        CONSTRAINT FK_gia_han_muon_tai_khoan
+            FOREIGN KEY (ma_thu_thu) REFERENCES dbo.tai_khoan(ma_tai_khoan)
+    );
+    CREATE INDEX IX_gia_han_muon_ngay
+        ON dbo.gia_han_muon(ngay_gia_han);
 END;
 GO
 
@@ -421,6 +506,10 @@ BEGIN
         CONSTRAINT CK_ct_phieu_phat_loai
             CHECK (loai_vi_pham IN ('QuaHan', 'Hong', 'Mat', 'Khac')),
         CONSTRAINT CK_ct_phieu_phat_so_ngay CHECK (so_ngay_tre IS NULL OR so_ngay_tre >= 0),
+        CONSTRAINT CK_ct_phieu_phat_qua_han
+            CHECK (loai_vi_pham <> 'QuaHan'
+                   OR (so_ngay_tre IS NOT NULL AND so_ngay_tre >= 1
+                       AND so_tien = so_ngay_tre * 2000.00)),
         CONSTRAINT CK_ct_phieu_phat_so_tien CHECK (so_tien >= 0),
         CONSTRAINT FK_ct_phieu_phat_phieu
             FOREIGN KEY (ma_phieu_phat) REFERENCES dbo.phieu_phat(ma_phieu_phat),
@@ -433,6 +522,38 @@ BEGIN
         ON dbo.ct_phieu_phat(ma_ct_muon)
         WHERE ma_ct_muon IS NOT NULL;
 END;
+GO
+
+IF NOT EXISTS (
+    SELECT 1 FROM sys.check_constraints
+    WHERE name = N'CK_ct_phieu_phat_qua_han'
+      AND parent_object_id = OBJECT_ID(N'dbo.ct_phieu_phat')
+)
+    ALTER TABLE dbo.ct_phieu_phat WITH NOCHECK
+        ADD CONSTRAINT CK_ct_phieu_phat_qua_han
+        CHECK (loai_vi_pham <> 'QuaHan'
+               OR (so_ngay_tre IS NOT NULL AND so_ngay_tre >= 1
+                   AND so_tien = so_ngay_tre * 2000.00));
+GO
+
+IF EXISTS (
+    SELECT ma_ct_muon,loai_vi_pham
+    FROM dbo.ct_phieu_phat
+    WHERE ma_ct_muon IS NOT NULL
+    GROUP BY ma_ct_muon,loai_vi_pham
+    HAVING COUNT(*) > 1
+)
+    THROW 51013, N'Mot luot muon co chi tiet phat trung loai vi pham.', 1;
+GO
+
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE name = N'UX_ct_phieu_phat_mot_loai_moi_luot'
+      AND object_id = OBJECT_ID(N'dbo.ct_phieu_phat')
+)
+    CREATE UNIQUE INDEX UX_ct_phieu_phat_mot_loai_moi_luot
+        ON dbo.ct_phieu_phat(ma_ct_muon,loai_vi_pham)
+        WHERE ma_ct_muon IS NOT NULL;
 GO
 
 CREATE OR ALTER TRIGGER dbo.TR_ct_phieu_phat_sync_total
@@ -952,11 +1073,13 @@ BEGIN
     INSERT INTO dbo.ct_phieu_muon(
         phieu_muon_id,
         ban_sao_sach_id,
+        han_tra,
         trang_thai
     )
     SELECT
         pm.id,
         bs.id,
+        pm.han_tra,
         'DANG_MUON'
     FROM dbo.phieu_muon pm
     CROSS JOIN dbo.ban_sao_sach bs

@@ -5,6 +5,7 @@ import vn.sgu.library.model.Fine;
 import vn.sgu.library.model.FineLine;
 import vn.sgu.library.model.UserSession;
 
+import java.math.BigDecimal;
 import java.sql.SQLException;
 import java.util.List;
 
@@ -28,6 +29,10 @@ public final class FineController {
 
     public static void validateDetail(FineLine detail) {
         FineDAO.validate(detail);
+    }
+
+    public static BigDecimal calculateOverdueFine(int overdueDays) {
+        return FineDAO.calculateOverdueFine(overdueDays);
     }
 
     public void markPaid(long fineId, String paymentMethod) throws SQLException {

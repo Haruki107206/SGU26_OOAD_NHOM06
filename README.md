@@ -71,11 +71,16 @@ Tài khoản Admin quản lý tài khoản và phân quyền; Thủ thư quản 
 - **Tra cứu:** thử `LIB-001` hoặc `Nguyễn Nhật Ánh`.
 - **Độc giả/thẻ:** mở **Độc giả/thẻ**; dữ liệu mẫu có `DG-DEMO01`, `DG-DEMO02`, thẻ `THE-DEMO01`, `THE-DEMO02`.
 - **Mượn:** mở **Mượn/trả**, nhập `DG-DEMO01` và mã vạch sẵn sàng `LIB-001-001`; có thể nhập nhiều mã, phân cách bằng dấu phẩy.
-- **Trả:** chọn lượt đang mượn, bấm **Ghi nhận trả cuốn đã chọn**, rồi chọn tốt/hỏng/mất.
+- **Giới hạn mượn:** thử mượn tối đa 5 cuốn; độc giả cần hoạt động, thẻ còn hạn và không có nợ phạt chưa thanh toán.
+- **Trả:** chọn lượt đang mượn, bấm **Ghi nhận trả cuốn đã chọn**, rồi chọn tốt/hỏng/mất. Hỏng/mất yêu cầu thủ thư nhập tiền bồi thường; sách tốt được đưa về `SAN_SANG`, còn hỏng/mất chuyển đúng trạng thái.
+- **Quá hạn:** tiền phạt được tính tự động là 2.000 đồng/cuốn/ngày, dựa trên hạn trả riêng của từng bản sao.
+- **Gia hạn:** chọn lượt chưa quá hạn, bấm **Gia hạn +7 ngày**; mỗi lượt chỉ được gia hạn một lần và độc giả không được còn nợ phạt. Hạn mới và lịch sử gia hạn hiển thị trên màn hình.
 - **Bản sao:** mở **Quản lý bản sao** để xem/thêm mã vạch hoặc đánh dấu hỏng/mất.
 - **Báo cáo:** mở **Báo cáo** để xem tổng quan, top 10 và xuất CSV.
 - **Tài khoản/phân quyền:** đăng nhập `Admin`, tạo tài khoản riêng cho Thủ thư hoặc liên kết tài khoản Độc giả với hồ sơ chưa liên kết; thử khóa/mở khóa và đăng nhập sai 6 lần.
 - **Phạt/công nợ:** tạo chi tiết vi phạm, xác nhận thanh toán tiền mặt/QR; thử mượn hoặc gia hạn thẻ khi còn khoản chưa thanh toán.
+
+Để thử quá hạn mà không chờ, chỉ dùng cơ sở dữ liệu thử nghiệm: cập nhật `ct_phieu_muon.han_tra` của một lượt đang mượn về ngày trong quá khứ rồi tải lại màn hình. Xác nhận số ngày trễ và tiền phạt bằng số ngày trễ nhân 2.000 đồng; trả hỏng/mất cần kiểm tra cả khoản phạt quá hạn và khoản bồi thường. Không chỉnh hạn trên cơ sở dữ liệu thật.
 
 Đây là bước kiểm tra thủ công ban đầu, chưa thay thế kiểm thử đầy đủ. Dữ liệu mẫu có thể đổi sau khi thao tác.
 
@@ -97,8 +102,9 @@ pom.xml                                      Cấu hình Maven/Connector-J
 - Trạng thái bản sao: `SAN_SANG`, `DANG_MUON`, `HONG`, `MAT`; chỉ `SAN_SANG` được mượn.
 - Cập nhật phiếu và tình trạng bản sao trong cùng giao dịch; không tạo bảng bản sao trùng.
 - Dùng `sach.trang_thai='AN'` để ẩn đầu sách có lịch sử; không ẩn sách còn bản sao đang mượn.
-- Quy tắc theo báo cáo: tối đa 5 cuốn đang mượn, hạn 14 ngày, gia hạn lượt mượn tối đa một lần và thêm 7 ngày. Hoàn thiện và kiểm tra nhất quán khi tích hợp.
-- Bảng tài khoản/gia hạn/phạt mới phải ghép vào script CSDL chung và giữ khóa ngoại phù hợp.
+- Quy tắc mượn: tối đa 5 bản sao đang mượn mỗi độc giả, hạn 14 ngày tính riêng từng cuốn, gia hạn tối đa một lần thêm 7 ngày.
+- Trả sách, cập nhật bản sao, chi tiết/phiếu mượn và tạo khoản phạt được xử lý trong transaction; lỗi sẽ rollback toàn bộ giao dịch.
+- Phạt quá hạn là 2.000 đồng/cuốn/ngày; tiền bồi thường hỏng/mất do thủ thư nhập.
 
 ## Cấu trúc thư mục nộp
 

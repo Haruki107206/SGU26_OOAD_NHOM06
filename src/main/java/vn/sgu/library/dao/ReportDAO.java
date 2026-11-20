@@ -13,7 +13,7 @@ import java.util.List;
 
 public final class ReportDAO {
     public LibraryStatistics statistics()throws SQLException{
-        String sql="SELECT (SELECT COUNT(*) FROM sach WHERE trang_thai='HOAT_DONG'),(SELECT COUNT(*) FROM ban_sao_sach),(SELECT COUNT(*) FROM ban_sao_sach WHERE trang_thai='SAN_SANG'),(SELECT COUNT(*) FROM doc_gia WHERE trang_thai='HOAT_DONG'),(SELECT COUNT(*) FROM ct_phieu_muon WHERE trang_thai='DANG_MUON'),(SELECT COUNT(*) FROM ct_phieu_muon ct JOIN phieu_muon pm ON pm.id=ct.phieu_muon_id WHERE ct.trang_thai='DANG_MUON' AND pm.han_tra<CAST(GETDATE() AS DATE))";
+        String sql="SELECT (SELECT COUNT(*) FROM sach WHERE trang_thai='HOAT_DONG'),(SELECT COUNT(*) FROM ban_sao_sach),(SELECT COUNT(*) FROM ban_sao_sach WHERE trang_thai='SAN_SANG'),(SELECT COUNT(*) FROM doc_gia WHERE trang_thai='HOAT_DONG'),(SELECT COUNT(*) FROM ct_phieu_muon WHERE trang_thai='DANG_MUON'),(SELECT COUNT(*) FROM ct_phieu_muon ct WHERE ct.trang_thai='DANG_MUON' AND ct.han_tra<CAST(GETDATE() AS DATE))";
         try(Connection c=Database.openConnection();PreparedStatement p=c.prepareStatement(sql);ResultSet r=p.executeQuery()){
             r.next();return new LibraryStatistics(r.getInt(1),r.getInt(2),r.getInt(3),r.getInt(4),r.getInt(5),r.getInt(6));
         }
